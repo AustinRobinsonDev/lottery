@@ -18,13 +18,14 @@ contract Raffle is VRFConsumerBaseV2Plus {
     error Raffle__SendMoreToEnterRaffle();
     error Raffle__TransferFailed();
     error Raffle__RaffleNotOpen();
+    error Raffle__UpkeepNotNeeded(uint256 balance, uint256 playersLength, uint256 raffleState);
 
     /**
      * Type Declarations
      */
     enum RaffleState {
-        OPEN,
-        CALCULATING
+        OPEN, // 0
+        CALCULATING // 1
     }
 
     /**
@@ -79,12 +80,33 @@ contract Raffle is VRFConsumerBaseV2Plus {
         s_players.push(payable(msg.sender));
         emit RaffleEntered(msg.sender);
     }
+    /**
+    * @param -  ignored.
+    * @return upkeepNeeded - true if its time to restart the lottery.
+    * @return - ignored.
+    * @dev this is the function that the chainlink nodes wil call to see 
+    * if the lottery is ready to have a winner picked.
+    * the following should be true in order for unkeepNeeded to be true:
+    * 1. The time interval has passed between raffle runs.
+    * 2. The lottery is in an open state.
+    * 3. The contract has eth. (people have entered the lottery)
+    * 4. Implicitly, your subscription has LINK.
+    */
 
-    function pickWinner() external {
-        if ((block.timestamp - s_lastTimeStamp) < i_interval) {
-            revert();
+    function checkUpkeep (bytes memory /*checkdata */) public view returns (bool upkeepNeeded, bytes memory /* performData */) {
+        bool timeHasPassed = ((block.timestamp - s_lastTimeStamp) >= i_interval);
+        bool isOpen = s_raffleState == RaffleState.OPEN;
+        bool hasBalance = address(this).balance > 0;
+        bool hasPlayers = s_players.length;
+        upkeepNeeded = timeHasPassed && isOpen && hasBalance && hasPlayers;
+        return (upkeepNeeded, "");
+    }
+
+    function performUpkeep(bytes calldata /*performData */) external {
+        (bool upkeepNeeded,) = checkUpkeep("");
+        if (!upkeepNeeded) {
+            revert Raffle__UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_raffleState));
         }
-
         s_raffleState = RaffleState.CALCULATING;
         uint256 requestId = s_vrfCoordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
